@@ -1,6 +1,10 @@
+
+from PyQt6.QtWidgets import QApplication, QFileDialog, QWidget, QMessageBox
+import sys
 import cv2
 import os
 import numpy as np
+
 
 def process_ref_image(ref_path, output_folder, tolerance=30):
     img = cv2.imread(ref_path)
@@ -149,5 +153,39 @@ def main():
             # Set strength to a fraction of the scale factor (e.g., 0.5 for scale/2)
             apply_median_filter_to_green_areas(ref_path, green_mask, img_path, output_folder, strength=0.5)
 
+
+
+
+def run_with_gui():
+    app = QApplication(sys.argv)
+    # Keep reference to app to avoid garbage collection
+    _ = app
+    widget = QWidget()
+    widget.setWindowTitle("PixFix - Select Reference Image")
+    ref_path, _ = QFileDialog.getOpenFileName(widget, "Select Reference Image", "", "Images (*.png *.jpg *.jpeg *.bmp *.tiff *.gif)")
+    if not ref_path:
+        QMessageBox.warning(widget, "No Image Selected", "You must select a reference image.")
+        return
+    input_folder = os.path.dirname(ref_path)
+    ref_file = os.path.basename(ref_path)
+    treated_folder = os.path.join(input_folder, "treated")
+    if not os.path.exists(treated_folder):
+        os.makedirs(treated_folder)
+    img = cv2.imread(ref_path)
+    if img is None:
+        QMessageBox.critical(widget, "Error", f"Could not read {ref_path}")
+        return
+    mask = np.any(img > 30, axis=2)
+    green_mask = mask
+    process_ref_image(ref_path, treated_folder, tolerance=30)
+    valid_exts = ['.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.gif']
+    files = os.listdir(input_folder)
+    for f in files:
+        if f != ref_file and os.path.splitext(f)[1].lower() in valid_exts + [e.upper() for e in valid_exts]:
+            img_path = os.path.join(input_folder, f)
+            print(f"Processing {f}...")
+            apply_median_filter_to_green_areas(ref_path, green_mask, img_path, treated_folder, strength=0.5)
+    QMessageBox.information(widget, "Done", f"Processing complete. Treated images saved in: {treated_folder}")
+
 if __name__ == "__main__":
-    main()
+    run_with_gui()
