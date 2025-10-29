@@ -94,8 +94,10 @@ def apply_median_filter_to_green_areas(ref_path, ref_mask, img_path, output_fold
     scale_x = img_w / ref_w
     scale_y = img_h / ref_h
     mask_resized = np.zeros((img_h, img_w), dtype=np.uint8)
+    # Ensure area multiplier is at least 1
+    area_multiplier = max(1, max(scale_x, scale_y) * strength)
+    expand_radius = int(np.ceil(area_multiplier))
     if strength > 0:
-        expand_radius = int(np.ceil(max(scale_x, scale_y) * strength))
         for y in range(img_h):
             for x in range(img_w):
                 ref_x = int(x / scale_x)
@@ -160,32 +162,83 @@ def run_with_gui():
     app = QApplication(sys.argv)
     # Keep reference to app to avoid garbage collection
     _ = app
-    widget = QWidget()
-    widget.setWindowTitle("PixFix - Select Reference Image")
-    ref_path, _ = QFileDialog.getOpenFileName(widget, "Select Reference Image", "", "Images (*.png *.jpg *.jpeg *.bmp *.tiff *.gif)")
-    if not ref_path:
-        QMessageBox.warning(widget, "No Image Selected", "You must select a reference image.")
-        return
-    input_folder = os.path.dirname(ref_path)
-    ref_file = os.path.basename(ref_path)
-    treated_folder = os.path.join(input_folder, "treated")
-    if not os.path.exists(treated_folder):
-        os.makedirs(treated_folder)
-    img = cv2.imread(ref_path)
-    if img is None:
-        QMessageBox.critical(widget, "Error", f"Could not read {ref_path}")
-        return
-    mask = np.any(img > 30, axis=2)
-    green_mask = mask
-    process_ref_image(ref_path, treated_folder, tolerance=30)
-    valid_exts = ['.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.gif']
-    files = os.listdir(input_folder)
-    for f in files:
-        if f != ref_file and os.path.splitext(f)[1].lower() in valid_exts + [e.upper() for e in valid_exts]:
-            img_path = os.path.join(input_folder, f)
-            print(f"Processing {f}...")
-            apply_median_filter_to_green_areas(ref_path, green_mask, img_path, treated_folder, strength=0.5)
-    QMessageBox.information(widget, "Done", f"Processing complete. Treated images saved in: {treated_folder}")
+    from PyQt6.QtWidgets import QVBoxLayout, QLabel, QSlider, QPushButton
+    from PyQt6.QtCore import Qt
+    class StrengthDialog(QWidget):
+        def __init__(self):
+            super().__init__()
+            self.setWindowTitle("PixFix - Select Reference Image and Strength")
+            self.layout = QVBoxLayout()
+            self.label = QLabel("Select strength (0.0 to 2.0):")
+            self.layout.addWidget(self.label)
+            self.slider = QSlider(Qt.Orientation.Horizontal)
+            self.slider.setMinimum(0)
+            self.slider.setMaximum(200)
+            self.slider.setValue(50)
+            self.slider.setTickInterval(10)
+            self.slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+            self.layout.addWidget(self.slider)
+            self.strength_value = QLabel("Strength: 0.5")
+            self.layout.addWidget(self.strength_value)
+            self.slider.valueChanged.connect(self.update_strength_label)
+            self.select_btn = QPushButton("Select Reference Image and Start")
+            self.layout.addWidget(self.select_btn)
+            self.progress_label = QLabel("")
+            self.progress_bar = None
+            self.setLayout(self.layout)
+            self.select_btn.clicked.connect(self.start_processing)
+        def update_strength_label(self, value):
+            strength = value / 100.0
+            self.strength_value.setText(f"Strength: {strength:.2f}")
+        def start_processing(self):
+            ref_path, _ = QFileDialog.getOpenFileName(self, "Select Reference Image", "", "Images (*.png *.jpg *.jpeg *.bmp *.tiff *.gif)")
+            if not ref_path:
+                QMessageBox.warning(self, "No Image Selected", "You must select a reference image.")
+                return
+            strength = self.slider.value() / 100.0
+            input_folder = os.path.dirname(ref_path)
+            ref_file = os.path.basename(ref_path)
+            treated_folder = os.path.join(input_folder, "treated")
+            if not os.path.exists(treated_folder):
+                os.makedirs(treated_folder)
+            img = cv2.imread(ref_path)
+            if img is None:
+                QMessageBox.critical(self, "Error", f"Could not read {ref_path}")
+                return
+            mask = np.any(img > 30, axis=2)
+            green_mask = mask
+            process_ref_image(ref_path, treated_folder, tolerance=30)
+            valid_exts = ['.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.gif']
+            files = [f for f in os.listdir(input_folder) if f != ref_file and os.path.splitext(f)[1].lower() in valid_exts + [e.upper() for e in valid_exts]]
+            total_files = len(files)
+            # Replace window content with progress bar
+            from PyQt6.QtWidgets import QProgressBar
+            if self.progress_bar is None:
+                self.progress_bar = QProgressBar()
+                self.progress_bar.setMinimum(0)
+                self.progress_bar.setMaximum(total_files)
+                self.layout.addWidget(self.progress_label)
+                self.layout.addWidget(self.progress_bar)
+            self.progress_label.setText(f"Processing {total_files} images...")
+            self.progress_bar.setValue(0)
+            self.select_btn.setEnabled(False)
+            self.slider.setEnabled(False)
+            processed_count = 0
+            for f in files:
+                img_path = os.path.join(input_folder, f)
+                self.progress_label.setText(f"Processing {f} ({processed_count+1}/{total_files})...")
+                QApplication.processEvents()
+                apply_median_filter_to_green_areas(ref_path, green_mask, img_path, treated_folder, strength=strength)
+                processed_count += 1
+                self.progress_bar.setValue(processed_count)
+                QApplication.processEvents()
+            self.progress_label.setText("Processing complete.")
+            self.select_btn.setEnabled(True)
+            self.slider.setEnabled(True)
+            QMessageBox.information(self, "Done", f"Processing complete. Treated images saved in: {treated_folder}")
+    dialog = StrengthDialog()
+    dialog.show()
+    app.exec()
 
 if __name__ == "__main__":
     run_with_gui()
